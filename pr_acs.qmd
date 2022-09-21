@@ -1,0 +1,151 @@
+---
+title: "Puerto Rico American community survey (ACS) Census"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(here)
+library(tidycensus)
+library(sf)
+options(tigris_use_cache = TRUE)
+library(patchwork)
+```
+
+# set up with API
+```{r}
+# census_api_key("c988f11e40676c6ef8513d09572902ac7ab0fd6f", install = TRUE)
+# readRenviron("~/.Renviron")
+```
+
+# pull pr data
+```{r}
+#  median household income in the past 12 months (B19013)
+pr_median_income <- get_acs(
+  geography = "block group", 
+  variable = "B19013_001",
+  state = "Puerto Rico",
+  year = 2020,
+  geometry = TRUE
+) %>% 
+  janitor::clean_names()
+
+# households by presence of people 60 years and over (B11006)
+pr_hh_60plus <- get_acs(
+  geography = "block group", 
+  variable = "B11006_001",
+  state = "Puerto Rico",
+  year = 2020,
+  geometry = TRUE
+) %>% 
+  janitor::clean_names()
+
+# housing units (B25001)
+pr_housing_units <- get_acs(
+  geography = "block group", 
+  variable = "B25001_001",
+  state = "Puerto Rico",
+  year = 2020,
+  geometry = TRUE
+) %>% 
+  janitor::clean_names()
+
+# total population (B01003)
+pr_totpop <- get_acs(
+  geography = "block group", 
+  variable = "B25001_001",
+  state = "Puerto Rico",
+  year = 2020,
+  geometry = TRUE
+) %>% 
+  janitor::clean_names()
+```
+
+# plot pr data
+```{r}
+p1 <- ggplot(data = pr_median_income, aes(fill = estimate)) + 
+  geom_sf() +
+  theme_void() +
+  labs(title = "Median household income in the past 12 months") +
+   scale_fill_distiller(palette = "OrRd", 
+                       direction = 1)
+
+p2 <- ggplot(data = pr_hh_60plus, aes(fill = estimate)) + 
+  geom_sf() +
+  theme_void() +
+  labs(title = "Households by presence of people 60 years and over") +
+   scale_fill_distiller(palette = "OrRd", 
+                       direction = 1)
+
+p3 <- ggplot(data = pr_housing_units, aes(fill = estimate)) + 
+  geom_sf() +
+  theme_void() +
+  labs(title = "Housing units") +
+   scale_fill_distiller(palette = "OrRd", 
+                       direction = 1)
+
+p4 <- ggplot(data = pr_totpop, aes(fill = estimate)) + 
+  geom_sf() +
+  theme_void() +
+  labs(title = "Total population") +
+   scale_fill_distiller(palette = "OrRd", 
+                       direction = 1)
+
+(p1 + p2)  / (p3 + p4)
+
+
+```
+
+# Data wrangling
+```{r}
+pr_hh_60plus_clean <- pr_hh_60plus %>% 
+   separate(name,c("block_group","cencus_tract", "municipality"),sep=",", extra = "merge")
+pr_totpop_clean <- pr_totpop %>% 
+   separate(name,c("block_group","cencus_tract", "municipality"),sep=",", extra = "merge")
+
+pr_totpop_bg <- pr_totpop_clean %>%
+  sf::st_drop_geometry() %>% 
+  group_by(block_group, municipality) %>%
+  summarise(sum_pop = sum(estimate))
+
+pr_hh_60plus_bg <- pr_hh_60plus_clean %>% 
+  sf::st_drop_geometry() %>% 
+    group_by(block_group, cencus_tract, municipality) %>%
+  summarise(sum_60plus = sum(estimate))
+
+prop_eld <- left_join(pr_totpop_bg, pr_hh_60plus_bg, by = c("block_group", "municipality")) %>% 
+  mutate(prop_eld = sum_60plus/sum_pop)
+
+prob_eld_geom <- 
+  right_join(prop_eld, pr_hh_60plus_clean, by = c("block_group", "municipality", "cencus_tract")) %>% select(-geoid, -variable, -estimate, -moe) %>% 
+  st_as_sf()
+
+ggplot(data = prob_eld_geom, aes(fill = prop_eld)) + 
+  geom_sf() +
+  theme_void() +
+  labs(title = "proportion elderly") +
+   scale_fill_distiller(palette = "OrRd", 
+                       direction = 1)
+
+```
+# Housing density 
+```{r}
+pr_housing_units_area <- pr_housing_units %>% mutate(area = st_area(pr_housing_units)) 
+
+pr_housing_units_area$area <- as.numeric(pr_housing_units_area$area)
+
+pr_housing_units_area<- pr_housing_units_area %>% 
+  mutate(housing_density = estimate/area) %>% 
+   separate(name,c("block_group","cencus_tract", "municipality"),sep=",", extra = "merge")
+
+ggplot(data = pr_housing_units_area, aes(fill = housing_density)) + 
+  geom_sf() +
+  theme_void() +
+  labs(title = "housing density") +
+   scale_fill_distiller(palette = "OrRd", 
+                       direction = 1,
+                       limits = c(min(pr_housing_units_area$housing_density), max(pr_housing_units_area$housing_density)))
+
+```
+
